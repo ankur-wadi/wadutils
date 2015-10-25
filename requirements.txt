@@ -1,0 +1,21 @@
+apt-get install -y \
+python-pip
+python-pip3
+
+pip install \
+https://github.com/namshi/python-namutil/archive/master.zip \
+gspread \
+oauth2client \
+boto \
+python-yaml \
+sqlalchemy \
+dropbox
+
+pip3 install \
+https://github.com/namshi/python-namutil/archive/master.zip \
+gspread \
+oauth2client \
+boto==2.28.0 \
+python3-yaml \
+sqlalchemy \
+dropbox
