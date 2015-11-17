@@ -1,5 +1,5 @@
 import os
-from namutil import memoize
+from namutil import memoize, get_engine
 from collections import OrderedDict, defaultdict
 
 @memoize(expiry_time=60*2)
@@ -223,3 +223,13 @@ def read_file_s3(file_name, bucket_name):
    res.get_contents_to_filename('/tmp/'+file_name)   
    return '/tmp/'+file_name
 
+def create_record(engine, query, **kwargs):
+    '''Executing Queries mysql '''
+
+    from sqlalchemy.sql import text
+    if isinstance(engine, basestring):
+        engine = get_engine(engine)
+    is_session = 'session' in repr(engine.__class__)
+    q = text(query.format(**kwargs))
+    result = engine.execute(q, params=kwargs) if is_session else engine.execute(q, **kwargs)
+    return True
