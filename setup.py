@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='wadutils',
-    version='0.6',
+    version='1.0',
     author='Samar Agrawal',
     author_email='samar.agrawal@wadi.com',
     packages = find_packages(),
