@@ -21,10 +21,10 @@ def google_login():
 
 #amazon/s3
 def sqs_connection(queue):
-    from boto import sqs
     '''Connect to the SQS queue'''
     '''Required AMAZON_REGION, AMAZON_ACCESS_KEY_ID, SECRET_ACCESS_KEY in env vars ''' 
 
+    from boto import sqs
     conn = sqs.connect_to_region(
               os.environ['AMAZON_REGION'],
               aws_access_key_id=os.environ['AMAZON_ACCESS_KEY_ID'],
@@ -34,7 +34,8 @@ def sqs_connection(queue):
 
 def write_to_sqs(queue_name, message):
     '''Write to sqs queue '''
-
+   
+    from boto import sqs 
     mail_queue = sqs_connection(queue_name)
     m = sqs.message.Message()
     data = message
