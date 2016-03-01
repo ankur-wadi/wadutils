@@ -4,6 +4,8 @@ python-pip3
 
 pip install \
 https://github.com/namshi/python-namutil/archive/master.zip \
+https://github.com/hzarka/python-zendesk/archive/master.zip \
+pyshorteners \
 gspread \
 oauth2client \
 boto \
@@ -15,6 +17,7 @@ pip3 install \
 https://github.com/namshi/python-namutil/archive/master.zip \
 gspread \
 hirlite \
+pyshorteners \
 graypy \
 mysqlclient \
 oauth2client \

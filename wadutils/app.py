@@ -1,94 +1,345 @@
-import os
-from namutil import memoize
-from collections import OrderedDict, defaultdict
+'''A collection of utilities used by different processes'''
 
-#google/docs
-@memoize(expiry_time=60*2)
+import os
+
+try:
+    from namutil import memoize
+except ImportError:
+    import memoize
+
+'''Google Utilities'''
+
+@memoize(expiry_time=60*5)
 def google_login():
-    '''Login to google for reading gdocs '''
+    '''Login to google for reading google docs
+       :param: GOOGLE_CREDS: complete file path to .json OAUTH credential file
+    '''
 
     import gspread, json
     from oauth2client.client import SignedJwtAssertionCredentials
 
     scope = ['https://spreadsheets.google.com/feeds']
-    json_key = json.load(open(os.environ['GOOGLE_CREDS'])) #complete file path to .json creds file for accessing google sheets
-    try:
-       credentials = SignedJwtAssertionCredentials(json_key['client_email'], json_key['private_key'], scope)
-    except TypeError: #for python3 support
-       credentials = SignedJwtAssertionCredentials(json_key['client_email'], bytes(json_key['private_key'], 'UTF-8'), scope)
-    gc = gspread.authorize(credentials)
-    return gc
+    json_key = json.load(open(os.environ['GOOGLE_CREDS']))
 
-#amazon/s3
-def sqs_connection(queue):
-    '''Connect to the SQS queue'''
-    '''Required AMAZON_REGION, AMAZON_ACCESS_KEY_ID, SECRET_ACCESS_KEY in env vars ''' 
+    try:
+        credentials = SignedJwtAssertionCredentials(json_key['client_email'],\
+            json_key['private_key'], scope)
+    except TypeError: #for python3 support
+        credentials = SignedJwtAssertionCredentials(json_key['client_email'],\
+            bytes(json_key['private_key'], 'UTF-8'), scope)
+
+    google_connection = gspread.authorize(credentials)
+    return google_connection
+
+def url_shortener(url):
+    '''Shorten url through google api
+      :param url: url to be shortened, with urlencode
+      :param SHORTENER_API_KEY: goo.gl shortener key
+    '''
+
+    from pyshorteners.shorteners import Shortener
+    shortener = Shortener('GoogleShortener', api_key=os.environ['SHORTENER_API_KEY'])
+    short_url = shortener.short(url)
+    return short_url
+
+
+'''Amazon Utilities'''
+
+@memoize(expiry_time=60*10)
+def get_s3_connection(bucket):
+    '''Establishing an S3 Connection
+       :param AMAZON_ACCESS_KEY_ID: Access key for AWS
+       :param SECRET_ACCESS_KEY: Secret key for AWS
+    '''
+
+    from boto.s3.connection import S3Connection
+
+    conn = S3Connection(os.environ['AMAZON_ACCESS_KEY_ID'], os.environ['SECRET_ACCESS_KEY'])
+    bucket_obj = conn.get_bucket(bucket)
+
+    return bucket_obj
+
+@memoize(expiry_time=60*10)
+def get_sqs_connection(queue):
+    '''Connect to the SQS queue
+       :param AMAZON_REGION: Amazon region
+       :param AMAZON_ACCESS_KEY_ID: Access key for AWS
+       :param SECRET_ACCESS_KEY: Secret key for AWS
+    '''
 
     from boto import sqs
-    conn = sqs.connect_to_region(
-              os.environ['AMAZON_REGION'],
-              aws_access_key_id=os.environ['AMAZON_ACCESS_KEY_ID'],
-              aws_secret_access_key=os.environ['SECRET_ACCESS_KEY'])
-    ops_queue = conn.get_queue(queue)
-    return ops_queue
+
+    connection = sqs.connect_to_region(
+        os.environ['AMAZON_REGION'],
+        aws_access_key_id=os.environ['AMAZON_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['SECRET_ACCESS_KEY'])
+    queue_obj = connection.get_queue(queue)
+
+    return queue_obj
 
 def write_to_sqs(queue_name, message):
-    '''Write to sqs queue '''
-   
-    from boto import sqs 
-    mail_queue = sqs_connection(queue_name)
+    '''Write to sqs queue
+       :param queue_name: Name of valid queue created in AWS
+       :param message: json formatted message
+    '''
+
+    from boto import sqs
+
+    mail_queue = get_sqs_connection(queue_name)
     m = sqs.message.Message()
     data = message
     m.set_body(data)
     status = mail_queue.write(m)
+
     return status
 
 def read_file_s3(file_name, bucket_name):
-   '''Reading from S3 file, storing it locally in tmp '''
+    '''Reading from S3 file, storing it locally in tmp
+       :param file_name: name of the file to be retrieved from S3
+       :param bucket_name: name of S3 bucket
+    '''
 
-   import tempfile
-   from boto.s3.connection import S3Connection
-   conn = S3Connection(os.environ['AMAZON_ACCESS_KEY_ID'], os.environ['SECRET_ACCESS_KEY'])
+    import tempfile
+    import csv
 
-   bucket = conn.get_bucket(bucket_name)
-   res = bucket.get_key(file_name)
-   if not res: return False
-   temp_dir = tempfile.mkdtemp()
-   res.get_contents_to_filename(temp_dir+file_name)
+    bucket = get_s3_connection(bucket_name)
+    res = bucket.get_key(file_name)
 
-   with open(temp_dir+file_name, 'rb') as csvfile:
+    if not res: return False
+
+    temp_dir = tempfile.mkdtemp(prefix="S3")
+    res.get_contents_to_filename(temp_dir+file_name)
+
+    with open(temp_dir+file_name, 'rb') as csvfile:
         stock_rows = csv.reader(csvfile)
         stock_rows.next()
         rows = [row for row in stock_rows]
 
-   return rows
+    return rows
 
-#generic
+
+'''Rabbit MQ'''
+
+@memoize(expiry_time=60*10)
+def get_rabbit_connection():
+    '''Connect to Rabbit MQ
+       :param RABBIT_CRED: connection string for rabbit MQ
+    '''
+
+    import pika
+    import pika_pool
+
+    pool = pika_pool.QueuedPool(
+        create=lambda: pika.BlockingConnection(
+            parameters=pika.URLParameters(os.environ['RABBIT_CRED'])),
+        max_size=10,
+        max_overflow=10,
+        timeout=10,
+        recycle=3600,
+        stale=45,
+        )
+    return pool
+
+def rabbit_publish(payload):
+    '''Publish to Rabbit MQ
+      :param ROUTING_KEY: key for rabbit MQ
+    '''
+    import json
+
+    with get_rabbit_connection().acquire() as cxn:
+        cxn.channel.basic_publish(
+            exchange='',
+            routing_key=os.environ['ROUTING_KEY'],
+            body=json.dumps(payload), mandatory=True)
+
+
+'''Geckoboard '''
+
+def update_geckoboard_text(widget_key, text):
+    '''Update text widget on Gecko
+       :param widget_key: key for the widget to be updated
+       :param text: text to be pushed
+       :param GECKO_API_KEY: geckoboard access key
+    '''
+
+    import requests
+    import json
+
+    geckourl = "https://push.geckoboard.com/v1/send/"+widget_key
+    gecko_post = requests.post(
+        geckourl,
+        data=json.dumps({"api_key":os.environ['GECKO_API_KEY'],\
+            "data": {"item":[{"text":text}]}}),\
+        headers={'Content-Type': 'application/json'}
+        )
+    return gecko_post
+
+
+'''Flask'''
+def stream_template(app, template_name, **context):
+    '''Stream Flask templates
+       :param app: flask app object
+       :param template_name: name of the template to be streamed
+       :param context: data to be streamed
+    '''
+
+    app.update_template_context(context)
+    template_obj = app.jinja_env.get_template(template_name)
+    return_value = template_obj.stream(context)
+    return_value.enable_buffering(5)
+    return return_value
+
+def generate_csv_flask(records):
+    '''Generate CSV file from flask request
+      :param records: records in the format of tuple of list [('head1','data1')('head2','data2')]
+    '''
+
+    for row in records:
+        row_list = []
+        for r in row:
+            val = str(r[1]) or ''
+            row_list.append(str(val.replace(',', '/')))
+        yield ','.join(row_list) + '\n'
+
+def generate_csv_flask_unicode(records):
+    '''Generate unicode CSV file from flask request
+      :param records: records in the format of tuple of list [('head1','data1')('head2','data2')]
+    '''
+
+    for row in records:
+        row_list = []
+        for r in row:
+            val = (unicode(r[1]).encode("utf-8")) if r else ''
+            row_list.append((val.replace(',', '/')))
+        yield ','.join(row_list) + '\n'
+
+
+'''Dropbox'''
+
+@memoize(expiry_time=60*5)
+def get_dropbox_connection():
+    '''Establish a connection to Dropbox
+       :param DROBOX_TOKEN: OAUTH Token for connecting to Dropbox
+    '''
+
+    import dropbox
+    connection = dropbox.Dropbox(
+        os.environ['DROPBOX_TOKEN'],
+        max_retries_on_error=2, max_retries_on_rate_limit=2)
+    return connection
+
+def get_file_dropbox(file_name):
+    '''Fetch file from dropbox, if not present return None, once read move file to archive
+      :param file_name: name of the file to be retrieved
+    '''
+
+    import tempfile
+    import dropbox
+    from datetime import datetime
+
+    client = get_dropbox_connection()
+    temp_dir = tempfile.mkdtemp(prefix='dropbox-')
+    now_date = str(datetime.utcnow()).replace(" ", "_")
+
+    try:
+        response = client.files_download_to_file(
+            download_path='/{}/{}'.format(temp_dir, file_name), path='/{}'.format(file_name))
+        client.files_move(
+            from_path='/{}'.format(file_name),
+            to_path='/archive/{}_{}'.format(now_date, file_name))
+        return response
+    except dropbox.exceptions.ApiError as e:
+        print(e)
+        return
+
+def push_file_dropbox(temp_dir, file_name):
+    '''Push files to dropbox
+       :param temp_dir: location of the file on local system
+       :param file_name: name of the file
+    '''
+
+    import dropbox
+
+    client = get_dropbox_connection()
+    f = open(temp_dir+file_name, 'rb')
+    mode = dropbox.files.WriteMode('add')
+    response = client.files_upload(f=f, path='/{}'.format(file_name), mode=mode, autorename=True)
+    f.close()
+
+    return response
+
+'''Zendesk'''
+
+@memoize(expiry_time=60*5)
+def get_zendesk_connection(host_name, user_name, password):
+    '''Establishing a zendesk connection
+      :param host_name: zendesk host name
+      :param user_name: zendesk login id
+      :param password: zendesk password
+    '''
+
+    import zendesk
+    zd = zendesk.Zendesk(host_name, (user_name, password))
+    return zd
+
+def zendesk_get_url(url, **kwargs):
+    '''Connect to Zendesk library
+      :param url: url to be retrieved using zendesk api
+    '''
+
+    zd = get_zendesk_connection()
+    return zd.get(url, kwargs).json
+
+def update_tag_external_id(ext_id, tag):
+    '''Update tag in Zendesk ticket by external id
+      :param ext_id: external id
+      :param tag: tag to be pushed
+    '''
+
+    zd = get_zendesk_connection()
+
+    response = zd.get("/tickets.json?external_id=%s"%(ext_id))
+    if response.json['tickets']:
+        ticket = response.json['tickets'][0]
+        ticket_id, status = ticket['id'], ticket['status']
+        if status != "closed": zd.add_tags(ticket_id, tag)
+    return response
+
+
+'''Generic Utilities'''
+
 def to_json(obj):
     '''Convert object to datetime '''
 
-    import json,datetime
+    import json
+    import datetime
     from decimal import Decimal
+
     def default(obj):
         if isinstance(obj, datetime.datetime) or isinstance(obj, datetime.date):
             return obj.isoformat()[:16]
         if isinstance(obj, Decimal):
             return int(obj)
         raise ValueError("Can't convert: %s" % repr(obj))
+
     return json.dumps(obj, default=default)
 
 def str_to_hex(text):
-    '''Converting arabic text to hex for sending as sms ''' 
+    '''Converting arabic text to hex for sending as sms
+       :param text: text in unicode format
+    '''
 
-    text = text.strip("u").strip("'") 
-    arabic_hex = [hex(ord(b)).replace("x","").upper().zfill(4) for b in text]
+    text = text.strip("u").strip("'")
+    arabic_hex = [hex(ord(b)).replace("x", "").upper().zfill(4) for b in text]
     arabic_hex.append("000A")
     text_update = "".join(arabic_hex)
     return text_update
 
-def yaml_loader(filename): 
-    '''Generate a dict from yml/twig file '''
-    '''Send file name along with path '''
+@memoize(expiry_time=60*10)
+def yaml_loader(filename):
+    '''Generate a dict from yml/twig file
+       :param filename: file path along with file name
+    '''
 
     import yaml
     f = open(filename)
@@ -98,85 +349,95 @@ def yaml_loader(filename):
 
 def pushformatter(param):
     '''Format contact number'''
+
     try:
         param = str(param)
     except UnicodeEncodeError:
-       return None
-    number=param.translate(None,'+').translate(None,'-')
-    if number[:3]=='971':
-       dialstring='00'+number
-       return dialstring
-    elif number[:2]=='00':
+        return None
+    number = param.translate(None, '+').translate(None, '-')
+    if number[:3] == '971':
+        dialstring = '00'+number
+        return dialstring
+    elif number[:2] == '00':
         return number
     else:
-        dialstring='00'+number
+        dialstring = '00'+number
         return dialstring
 
-def generate(items):
-    '''Push content to CSV file '''
-
-    for row in items:
-        li = []
-        for r in row:
-            val = str(r[1]) or ''
-            li.append(str(val.replace(',','/')))
-        yield ','.join(li) + '\n'
-
 def decimal_default(obj):
+    '''Converting decimal to float for json '''
+
+    import decimal
     if isinstance(obj, decimal.Decimal):
         return float(obj)
     raise TypeError
 
-def generate_unicode(items):
-   '''Unicode support '''
+def write_to_csv(file_name, records, fieldnames=None):
+    '''Dumping to csv file from a dict'''
 
-   for row in items:
-       li = []
-       for r in row:
-           val = (unicode(r[1]).encode("utf-8")) if r else ''
-           li.append((val.replace(',','/')))
-       yield ','.join(li) + '\n'
-
-class OrderedDefaultDict(OrderedDict):
-    '''Arranging nested Dictionary in default order'''
-
-    def __init__(self, default_factory=None, *args, **kwargs):
-        super(OrderedDefaultDict, self).__init__(*args, **kwargs)
-        self.default_factory = default_factory
-    def __missing__(self, key):
-        if self.default_factory is None:
-            raise KeyError(key)
-        val = self[key] = self.default_factory()
-        return val
-
-def csv_reader(file):
     import csv
-    '''Reading csv and creating Dict'''
+    from datetime import datetime
 
-    order_items = OrderedDefaultDict(OrderedDict)
-    csv_file = file
-    reader = csv.reader(csv_file)
-    header = reader.next()
-    for row in reader:
-        try: row[1]
-        except IndexError: print("CSV formatting error, update the row resave the file and upload: %s"%(row))
-        order_items[row[0]][row[1]] = OrderedDict(zip(header, row))
-    return order_items
+    with open('/tmp/' + file_name, 'w') as csvfile:
+        if not fieldnames:
+            fieldnames = records[0].keys()
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction='ignore')
+        writer.writeheader()
+        for row in records:
+            writer.writerow(row)
+        print('{} dumped at: {}'.format(file_name, datetime.now()))
+
+def csv_reader(dir_path, file_name):
+    '''Reading data from CSV file
+      :param dir_path: location of file on system
+      :param file_name: name of file
+    '''
+
+    import csv
+    with open(dir_path+file_name, 'r', encoding='ascii', errors='ignore') as csvfile:
+        reader = csv.reader(csvfile)
+        try:
+            data = [row for row in reader]
+        except csv.Error as e:
+            print(e)
+            return ''
+    return data
+
+def csv_reader_dict(dir_path, file_name):
+    '''Reading csv file and returning list of dict for data
+      :param dir_path: location of file
+      :param file_name: name of file
+    '''
+
+    import csv
+    with open(dir_path+file_name) as csvfile:
+        reader = csv.DictReader(csvfile)
+        data = [row for row in reader]
+
+    return data
 
 def chunker(seq, size):
-    '''break data structure to mentioned sized chunks'''
+    '''break data structure to mentioned sized chunks
+       :param seq: list of records
+       :param size: chunks to broken into
+    '''
 
     return (seq[pos:pos + size] for pos in range(0, len(seq), size))
 
 def update_timestamp(key, timestamp):
-    '''update the redis key with timestamp'''
+    '''update the redis key with timestamp
+      :param key: unique identifier
+      :param timestamp: timestamp
+    '''
 
     import hirlite
     rlite = hirlite.Rlite(path='timer.rld')
     rlite.command('set', key, timestamp)
 
 def get_timestamp(key):
-    '''Fetch last runtime'''
+    '''Fetch last runtime
+      :param key: unique identifier
+    '''
 
     from datetime import datetime, timedelta
     import hirlite
@@ -194,145 +455,57 @@ def get_timestamp(key):
         timestamp = timestamp
     return timestamp
 
-#geckoboard
-def update_geckoboard_text(widget_key, text):
-    '''Update text widget on Gecko ''' 
-    import os, requests
-    geckourl = "https://push.geckoboard.com/v1/send/"+widget_key
-    gecko_post = requests.post(geckourl, data=json.dumps({"api_key":os.environ['APIKEY'], "data": {"item":[{"text":text}]} }),
-           headers={'Content-Type': 'application/json'})
-    return gecko_post
 
-#flask
-def stream_template(app, template_name, **context):
-    '''Stream Flask templates '''
+'''DB connections/updates '''
 
-    app.update_template_context(context)
-    t = app.jinja_env.get_template(template_name)
-    rv = t.stream(context)
-    rv.enable_buffering(5)
-    return rv
+def get_engine(db):
+    '''fetch sql engine
+       :param db: mysql connection string in format mysql://username:password@host:port
+    '''
 
-#rabbit
-@memoize(expiry_time=60*30)
-def rabbit_connect():
-    '''Connect to Rabbit '''
-
-    import pika
-    import pika_pool
-
-    pool = pika_pool.QueuedPool(
-     create=lambda: pika.BlockingConnection(parameters=pika.URLParameters(os.environ['RABBIT_CRED'])),
-     max_size=10,
-     max_overflow=10,
-     timeout=10,
-     recycle=3600,
-     stale=45,
-    )
-    return pool
-
-def rabbit_publish(payload):
-    '''Publish to Rabbit MQ '''
-
-    with pool.acquire() as cxn:
-       message = cxn.channel.basic_publish(exchange='',                                                                                    
-                      routing_key=os.environ['ROUTING_KEY'],
-                      body = json.dumps(payload), mandatory = True)
-
-#dropbox
-def read_file_dropbox(file_name):
-    '''Fetch file from dropbox, if not present return None, once read move file to archive ''' 
-
-    import dropbox
-    access_token = os.environ['DROPBOX_TOKEN']
-    print("Reading File: %s"%(file_name))
-    client = dropbox.client.DropboxClient(access_token)
-
-    try:
-      f, metadata = client.get_file_and_metadata('/%s'%(file_name))
-      return f
-    except dropbox.rest.ErrorResponse as e:
-      return  
-
-def write_file_dropbox(temp_dir,file_name):
-    '''push files to dropbox'''
-
-    import dropbox
-    access_token = os.environ['DROPBOX_TOKEN']
-    client = dropbox.client.DropboxClient(access_token)
-    f = open(temp_dir+file_name, 'rb')
-    response = client.put_file('/%s'%(file_name), f, overwrite=False)
-    f.close()
-    return response
-
-def dropbox_to_local(file_name):
-    '''Fetch file from dropbox, copying content to local system, move file to archive '''
-
-    import tempfile
-    import dropbox
-    import csv
-    from datetime import datetime
-
-    access_token = os.environ['DROPBOX_TOKEN']
-    client = dropbox.client.DropboxClient(access_token)
-
-    f = read_file_dropbox(file_name)
-    if not f: return None
-    temp_dir = tempfile.mkdtemp()
-
-    out = open(temp_dir+file_name, 'wb')
-    out.write(f.read())
-    out.close()
-
-    with open(temp_dir+file_name, 'r', encoding='ascii',errors='ignore') as csvfile:
-        rows = csv.reader(csvfile)
-        data = [row for row in rows]
-
-    client.file_move('/%s'%(file_name), \
-               '/archive/%s_%s'%(str(datetime.utcnow()).replace(" ", "_"), file_name))
-    return data
-
-#sqlalchemy/db
-def create_record(engine, query, **kwargs):
-    '''Executing Queries mysql '''
-
-    from sqlalchemy.sql import text
-    if isinstance(engine, basestring):
-        engine = get_engine(engine)
-    is_session = 'session' in repr(engine.__class__)
-    q = text(query.format(**kwargs))
-    result = engine.execute(q, params=kwargs) if is_session else engine.execute(q, **kwargs)
-    return True
+    from sqlalchemy import create_engine
+    conn = create_engine(db, pool_recycle=60, max_overflow=0, pool_timeout=30)
+    return conn.connect()
 
 def insert_into(engine, table_name, values):
-    '''For inserting data into DB, on duplicate key update '''
+    '''For inserting data into DB, on duplicate key update
+       :param engine: mysql connection string in format mysql://username:password@host:port/schema
+       :param table_name: name of the table
+       :param value: list of dicts
+    '''
+
     import sqlalchemy
+
+    if not values: return
+
     engine = sqlalchemy.create_engine(engine)
     metadata = sqlalchemy.MetaData(bind=engine)
     table = sqlalchemy.Table(table_name, metadata, autoload=True)
 
-    if not values: return
     table = metadata.tables[table_name]
     for row in values:
         columns = list(set(table._columns.keys()) & set(row.keys()))
-        query = sqlalchemy.text("INSERT INTO `{}` ({}) VALUES ({}) ON DUPLICATE KEY UPDATE {}".format(table_name, ", ".join(columns), ", ".join(":" + c for c in columns), ", ".join("{}=VALUES({})".format(c, c) for c in columns)))
+        query = sqlalchemy.text(
+            "INSERT INTO `{}` ({}) VALUES ({}) ON DUPLICATE KEY UPDATE {}".format(
+                table_name, ", ".join(columns), ", ".join(":" + c for c in columns),
+                ", ".join("{}=VALUES({})".format(c, c) for c in columns)))
         engine.execute(query, row)
+
     return engine
 
-def get_engine(e):
-    '''fetch sql engine'''
-
-    from sqlalchemy import create_engine
-    conn = create_engine(e, pool_recycle=60, max_overflow=0, pool_timeout=30)
-    return conn.connect()
-
 def get_results_as_dict(*args, **kwargs):
-    '''return sql data'''
+    '''return sql data as a list of dict
+      :param query: sql query to be executed
+      :param db: mysql connection string
+    '''
 
     return list(get_results_as_dict_iter(*args, **kwargs))
 
 def get_results_as_dict_iter(engine, query, dict=dict, engines={}, **kwargs):
-    '''fetch results from sql read query '''
+    '''fetch results from sql read query
+       :param engine: mysql connection string
+       :param query: mysql query to be executed
+    '''
 
     from sqlalchemy.sql import text
     from namutil import format_query_with_list_params
@@ -355,12 +528,20 @@ def get_results_as_dict_iter(engine, query, dict=dict, engines={}, **kwargs):
     for r in result:
         yield dict((k, v) for k, v in zip(keys, r))
 
-def write_to_db(db, table_name, trunc, records, *args, **kwargs):
-    '''update data to mysql table'''
+def write_to_db(db, table_name, truncate, records, *args, **kwargs):
+    '''bulk update data to mysql table
+      :param db: mysql connection string in format mysql://username:password@host:port/schema
+      :param table_name: name of the table to be updated
+      :param truncate: by default false, if set to 1, truncates the table before updating
+      :param records: list of tuples of record in the same order as column names in db
+      :param ignore: by default true, to not consider the primary key id field,
+                     if set to false data needs to be supplied
+      :param query: raw insert/update query to be executed
+    '''
+
     import sqlalchemy
 
-    conn = sqlalchemy.create_engine(db, pool_recycle=60, max_overflow=0, pool_timeout=30)
-    engine = conn.connect()
+    engine = get_engine(db)
 
     if 'query' in kwargs:
         engine.execute(kwargs['query'])
@@ -377,7 +558,7 @@ def write_to_db(db, table_name, trunc, records, *args, **kwargs):
         columns.pop(0)
     del columns[len(records[0]):]
 
-    if trunc:
+    if truncate:
         query = sqlalchemy.text("Truncate {}".format(table_name))
         engine.execute(query)
 
