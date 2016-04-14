@@ -86,10 +86,9 @@ def write_to_sqs(queue_name, message):
     from boto import sqs
 
     mail_queue = get_sqs_connection(queue_name)
-    m = sqs.message.Message()
-    data = message
-    m.set_body(data)
-    status = mail_queue.write(m)
+    message_object = sqs.message.Message()
+    message_object.set_body(message)
+    status = mail_queue.write(message_object)
 
     return status
 
@@ -103,12 +102,12 @@ def read_file_s3(file_name, bucket_name):
     import csv
 
     bucket = get_s3_connection(bucket_name)
-    res = bucket.get_key(file_name)
+    response = bucket.get_key(file_name)
 
-    if not res: return False
+    if not response: return False
 
     temp_dir = tempfile.mkdtemp(prefix="S3")
-    res.get_contents_to_filename(temp_dir+file_name)
+    response.get_contents_to_filename(temp_dir+file_name)
 
     with open(temp_dir+file_name, 'rb') as csvfile:
         stock_rows = csv.reader(csvfile)
@@ -194,10 +193,10 @@ def generate_csv_flask(records):
       :param records: records in the format of tuple of list [('head1','data1')('head2','data2')]
     '''
 
-    for row in records:
+    for rows in records:
         row_list = []
-        for r in row:
-            val = str(r[1]) or ''
+        for row in rows:
+            val = str(row[1]) or ''
             row_list.append(str(val.replace(',', '/')))
         yield ','.join(row_list) + '\n'
 
@@ -206,10 +205,10 @@ def generate_csv_flask_unicode(records):
       :param records: records in the format of tuple of list [('head1','data1')('head2','data2')]
     '''
 
-    for row in records:
+    for rows in records:
         row_list = []
-        for r in row:
-            val = (unicode(r[1]).encode("utf-8")) if r else ''
+        for row in rows:
+            val = (unicode(row[1]).encode("utf-8")) if row else ''
             row_list.append((val.replace(',', '/')))
         yield ','.join(row_list) + '\n'
 
@@ -228,7 +227,7 @@ def get_dropbox_connection():
         max_retries_on_error=2, max_retries_on_rate_limit=2)
     return connection
 
-def get_file_dropbox(file_name):
+def get_file_dropbox(file_name, move=True):
     '''Fetch file from dropbox, if not present return None, once read move file to archive
       :param file_name: name of the file to be retrieved
     '''
@@ -244,12 +243,14 @@ def get_file_dropbox(file_name):
     try:
         response = client.files_download_to_file(
             download_path='/{}/{}'.format(temp_dir, file_name), path='/{}'.format(file_name))
-        client.files_move(
-            from_path='/{}'.format(file_name),
-            to_path='/archive/{}_{}'.format(now_date, file_name))
+        if move:
+            client.files_move(
+                from_path='/{}'.format(file_name),
+                to_path='/archive/{}_{}'.format(now_date, file_name))
+            return temp_dir, file_name
         return response
-    except dropbox.exceptions.ApiError as e:
-        print(e)
+    except dropbox.exceptions.ApiError as error:
+        print(error)
         return
 
 def push_file_dropbox(temp_dir, file_name):
@@ -261,48 +262,12 @@ def push_file_dropbox(temp_dir, file_name):
     import dropbox
 
     client = get_dropbox_connection()
-    f = open(temp_dir+file_name, 'rb')
+    file_obj = open(temp_dir+file_name, 'rb')
     mode = dropbox.files.WriteMode('add')
-    response = client.files_upload(f=f, path='/{}'.format(file_name), mode=mode, autorename=True)
-    f.close()
+    response = client.files_upload(
+        f=file_obj, path='/{}'.format(file_name), mode=mode, autorename=True)
+    file_obj.close()
 
-    return response
-
-'''Zendesk'''
-
-@memoize(expiry_time=60*5)
-def get_zendesk_connection(host_name, user_name, password):
-    '''Establishing a zendesk connection
-      :param host_name: zendesk host name
-      :param user_name: zendesk login id
-      :param password: zendesk password
-    '''
-
-    import zendesk
-    zd = zendesk.Zendesk(host_name, (user_name, password))
-    return zd
-
-def zendesk_get_url(url, **kwargs):
-    '''Connect to Zendesk library
-      :param url: url to be retrieved using zendesk api
-    '''
-
-    zd = get_zendesk_connection()
-    return zd.get(url, kwargs).json
-
-def update_tag_external_id(ext_id, tag):
-    '''Update tag in Zendesk ticket by external id
-      :param ext_id: external id
-      :param tag: tag to be pushed
-    '''
-
-    zd = get_zendesk_connection()
-
-    response = zd.get("/tickets.json?external_id=%s"%(ext_id))
-    if response.json['tickets']:
-        ticket = response.json['tickets'][0]
-        ticket_id, status = ticket['id'], ticket['status']
-        if status != "closed": zd.add_tags(ticket_id, tag)
     return response
 
 
@@ -342,9 +307,9 @@ def yaml_loader(filename):
     '''
 
     import yaml
-    f = open(filename)
-    yml_dict = yaml.safe_load(f)
-    f.close()
+    file_obj = open(filename)
+    yml_dict = yaml.safe_load(file_obj)
+    file_obj.close()
     return yml_dict
 
 def pushformatter(param):
@@ -398,8 +363,8 @@ def csv_reader(dir_path, file_name):
         reader = csv.reader(csvfile)
         try:
             data = [row for row in reader]
-        except csv.Error as e:
-            print(e)
+        except csv.Error as error:
+            print(error)
             return ''
     return data
 
@@ -522,11 +487,11 @@ def get_results_as_dict_iter(engine, query, dict=dict, engines={}, **kwargs):
 
     q = text(query.format(**kwargs))
     result = engine.execute(q, params=kwargs) if is_session else engine.execute(q, **kwargs)
-    engine.close()
-    engine.engine.dispose()
     keys = result.keys()
     for r in result:
         yield dict((k, v) for k, v in zip(keys, r))
+    engine.close()
+    engine.engine.dispose()
 
 def write_to_db(db, table_name, truncate, records, *args, **kwargs):
     '''bulk update data to mysql table

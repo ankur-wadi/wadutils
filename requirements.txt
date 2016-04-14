@@ -1,27 +1,10 @@
-apt-get install -y \
-python-pip
-python-pip3
-
-pip install \
-https://github.com/namshi/python-namutil/archive/master.zip \
-https://github.com/hzarka/python-zendesk/archive/master.zip \
-pyshorteners \
-gspread \
-oauth2client \
-boto \
-python-yaml \
-sqlalchemy \
-dropbox
-
-pip3 install \
-https://github.com/namshi/python-namutil/archive/master.zip \
-gspread \
-hirlite \
-pyshorteners \
-graypy \
-mysqlclient \
-oauth2client \
-boto==2.28.0 \
-python3-yaml \
-sqlalchemy \
-dropbox
+pyshorteners==0.5.8
+gspread==0.2.5
+oauth2client==1.5.2
+boto==2.32.1
+pyyaml==3.11
+sqlalchemy==0.9.4
+dropbox==6.0
+requests==2.9.1
+hirlite==0.1.1
+https://github.com/namshi/python-namutil/archive/f50e0a0736e9dcbdf2a062eebf83508b9c0e41aa.zip
