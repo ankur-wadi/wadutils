@@ -3,6 +3,9 @@
 import os
 
 from .utils import memoize
+from lxml import etree
+import requests
+from requests_ntlm import HttpNtlmAuth
 
 '''Google Utilities'''
 
@@ -545,3 +548,27 @@ def get_graylogger(host, facility, level='INFO', port=12201, **kwargs):
     logger.addHandler(h)
     logger.info("Starting")
     return logger
+
+
+class SoapHelper(object):
+    def get_xml(self, xmldata, post_url, soap_action, username=None, password=None):
+        auth = HttpNtlmAuth(username, password)
+        soap_response = requests.post(post_url, headers={
+            "Content-Type": "text/xml; charset=utf-8",
+            "Content-Length": str(len(xmldata)),
+            "SOAPAction": soap_action}, 
+            data=xmldata,
+            auth=auth)
+
+        if soap_response.status_code == 200:
+            return {'status': True, 'message': "Item successfully exported to erp!"}
+
+        xml = etree.fromstring(soap_response.content)
+        error = None
+        try:
+            for elem in xml.iter('faultstring'):
+                error = elem.text
+        except Exception as e:
+            error = "Unknown error occurred!"
+
+        return {'status': False, 'message': error}
