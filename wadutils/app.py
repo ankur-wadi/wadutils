@@ -2,7 +2,7 @@
 
 import os
 
-from utils import memoize
+from .utils import memoize
 
 '''Google Utilities'''
 
