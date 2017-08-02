@@ -2,10 +2,7 @@
 
 import os
 
-try:
-    from namutil import memoize
-except ImportError:
-    import memoize
+from utils import memoize
 
 '''Google Utilities'''
 
