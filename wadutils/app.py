@@ -533,3 +533,15 @@ def write_to_db(db, table_name, truncate, records, *args, **kwargs):
     engine.engine.dispose()
 
     return engine
+
+def get_graylogger(host, facility, level='INFO', port=12201, **kwargs):
+    import logging, graypy
+    logger = logging.getLogger(facility)
+    logger.setLevel(getattr(logging, level))
+    logger.addHandler(graypy.GELFHandler(host, port, **kwargs))
+    h = logging.StreamHandler()
+    h.setLevel(logging.DEBUG)
+    h.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    logger.addHandler(h)
+    logger.info("Starting")
+    return logger
