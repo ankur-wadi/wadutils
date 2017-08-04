@@ -7,4 +7,8 @@ sqlalchemy==0.9.4
 dropbox==6.0
 requests==2.9.1
 hirlite==0.1.1
-https://github.com/namshi/python-namutil/archive/f50e0a0736e9dcbdf2a062eebf83508b9c0e41aa.zip
+requests_ntlm
+lxml
+graypy
+pika
+pika_pool
