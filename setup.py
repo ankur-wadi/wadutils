@@ -11,6 +11,7 @@ setup(
     install_requires=[
         "pyshorteners",
         "gspread",
+        "pyopenssl",
         "oauth2client",
         "boto",
         "pyyaml",
