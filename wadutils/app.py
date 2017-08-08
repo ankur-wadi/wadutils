@@ -2,12 +2,11 @@
 
 import os
 
-from .utils import memoize
 from lxml import etree
 import requests
 from requests_ntlm import HttpNtlmAuth
 from sqlalchemy.sql import text
-from utils import format_query_with_list_params
+from wadutils.utils import format_query_with_list_params, memoize
 import logging, graypy
 import gspread, json
 from oauth2client.client import SignedJwtAssertionCredentials
