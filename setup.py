@@ -8,6 +8,22 @@ setup(
     author_email='samar.agrawal@wadi.com',
     packages = find_packages(),
     package_dir = {'': '.'},
+    install_requires=[
+        "pyshorteners",
+        "gspread",
+        "oauth2client",
+        "boto",
+        "pyyaml",
+        "sqlalchemy",
+        "dropbox",
+        "requests",
+        "hirlite",
+        "requests_ntlm",
+        "lxml",
+        "graypy",
+        "pika",
+        "pika_pool"
+    ],
     classifiers=[
         'Development Status :: 1 - Alpha',
         'Environment :: Web Environment',
