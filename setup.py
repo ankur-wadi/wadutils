@@ -12,7 +12,7 @@ setup(
         "pyshorteners",
         "gspread",
         "pyopenssl",
-        "oauth2client",
+        "oauth2client==1.5.2",
         "boto",
         "pyyaml",
         "sqlalchemy",
