@@ -533,3 +533,16 @@ class SoapHelper(object):
             error = "Unknown error occurred!"
 
         return {'status': False, 'message': error}
+
+def health_check(health_check_endpoint, health_check_id):
+    import requests
+
+    try:
+        url = health_check_endpoint + health_check_id
+        response = requests.get(url, timeout=3)
+        if response.status_code == 200:
+            return True
+    except:
+        return False
+
+
