@@ -94,6 +94,27 @@ def write_to_sqs(queue_name, message):
 
     return status
 
+def delete_sqs_message(queue, message, retry=3):
+    '''Delete an sqs message from queue.
+    Retry if delete_message returns False. 
+    Try for maximum of three attempts.
+    :param queue: SQS queue object
+    :param message: SQS message object
+    :return:bool ( True for deleted, False for unable to delete )
+    '''
+
+    if retry > 3:
+        retry = 3
+
+    for i in range(0,retry):
+        try:
+            if queue.delete_message(message):
+                return True
+        except:
+            continue
+
+    return False
+
 def read_file_s3(file_name, bucket_name):
     '''Reading from S3 file, storing it locally in tmp
        :param file_name: name of the file to be retrieved from S3
